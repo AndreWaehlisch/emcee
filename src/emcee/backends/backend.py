@@ -211,13 +211,16 @@ class Backend(object):
                 "invalid acceptance size; expected {0}".format(nwalkers)
             )
 
-    def save_step(self, state, accepted):
+    def save_step(self, state, accepted, forceSave=False):
         """Save a step to the backend
 
         Args:
             state (State): The :class:`State` of the ensemble.
             accepted (ndarray): An array of boolean flags indicating whether
                 or not the proposal for each walker was accepted.
+            forceSave (Optional[bool]): Backends may choose to buffer the
+                saving process, however we need to force saving at the last
+                iteration. In that case this shall be set to True.
 
         """
         self._check(state, accepted)

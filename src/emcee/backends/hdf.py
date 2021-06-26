@@ -2,6 +2,8 @@
 
 from __future__ import division, print_function
 
+__all__ = ["HDFBackend", "TempHDFBackend", "does_hdf5_support_longdouble"]
+
 import os
 from tempfile import NamedTemporaryFile
 
@@ -9,8 +11,6 @@ import numpy as np
 
 from .. import __version__
 from .backend import Backend
-
-__all__ = ["HDFBackend", "TempHDFBackend", "does_hdf5_support_longdouble"]
 
 
 try:
@@ -51,6 +51,13 @@ class HDFBackend(Backend):
             be saved.
         read_only (bool; optional): If ``True``, the backend will throw a
             ``RuntimeError`` if the file is opened with write access.
+        store_niter (int): Normally the backend stores the progress
+            during sampling on each iteration. Set this to a number n, to
+            allow file access only every n-th iteration. All data will be
+            saved eventually, however this setting may save I/O overhead.
+            Set this to the total number of iterations to only save on
+            the last iteration. Set this to 1 to save on every iteration
+            (the default).
 
     """
 
@@ -59,6 +66,7 @@ class HDFBackend(Backend):
         filename,
         name="mcmc",
         read_only=False,
+        store_niter=1,
         dtype=None,
         compression=None,
         compression_opts=None,
@@ -68,6 +76,9 @@ class HDFBackend(Backend):
         self.filename = filename
         self.name = name
         self.read_only = read_only
+        self.store_niter = store_niter
+        self.store_list = list()
+        self.iter = 1
         self.compression = compression
         self.compression_opts = compression_opts
         if dtype is None:
@@ -234,37 +245,43 @@ class HDFBackend(Backend):
                     if g["blobs"].dtype.shape != blobs.shape[1:]:
                         raise ValueError(
                             "Existing blobs have shape {} but new blobs "
-                            "requested with shape {}".format(
-                                g["blobs"].dtype.shape, blobs.shape[1:]
-                            )
-                        )
+                            "requested with shape {}"
+                            .format(g["blobs"].dtype.shape, blobs.shape[1:]))
                 g.attrs["has_blobs"] = True
 
-    def save_step(self, state, accepted):
+    def save_step(self, state, accepted, forceSave=False):
         """Save a step to the backend
 
         Args:
             state (State): The :class:`State` of the ensemble.
             accepted (ndarray): An array of boolean flags indicating whether
                 or not the proposal for each walker was accepted.
+            forceSave (Optional[bool]): Backends may choose to buffer the
+                saving process, however we need to force saving at the last
+                iteration. In that case this shall be set to True.
 
         """
-        self._check(state, accepted)
+        self.store_list.append((state, accepted))
+        if forceSave or (self.iter % self.store_niter == 0):
+            with self.open("a") as f:
+                for state, accepted in self.store_list:
+                    self._check(state, accepted)
 
-        with self.open("a") as f:
-            g = f[self.name]
-            iteration = g.attrs["iteration"]
+                    g = f[self.name]
+                    iteration = g.attrs["iteration"]
 
-            g["chain"][iteration, :, :] = state.coords
-            g["log_prob"][iteration, :] = state.log_prob
-            if state.blobs is not None:
-                g["blobs"][iteration, :] = state.blobs
-            g["accepted"][:] += accepted
+                    g["chain"][iteration, :, :] = state.coords
+                    g["log_prob"][iteration, :] = state.log_prob
+                    if state.blobs is not None:
+                        g["blobs"][iteration, :] = state.blobs
+                    g["accepted"][:] += accepted
 
-            for i, v in enumerate(state.random_state):
-                g.attrs["random_state_{0}".format(i)] = v
+                    for i, v in enumerate(state.random_state):
+                        g.attrs["random_state_{0}".format(i)] = v
 
-            g.attrs["iteration"] = iteration + 1
+                    g.attrs["iteration"] = iteration + 1
+            self.store_list = list()
+        self.iter += 1
 
 
 class TempHDFBackend(object):

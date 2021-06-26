@@ -260,6 +260,7 @@ class EnsembleSampler(object):
         thin_by=1,
         thin=None,
         store=True,
+        store_niter=None,
         progress=False,
     ):
         """Advance the chain as a generator
@@ -281,6 +282,11 @@ class EnsembleSampler(object):
                 chain. If you are using another method to store the samples to
                 a file or if you don't need to analyze the samples after the
                 fact (for burn-in for example) set ``store`` to ``False``.
+            store_niter (Optional[int]): If ``store`` is set to True and this
+	        is set to an integer between 1 and the number ``iterations``,
+		only every ``store_niter``-th iteration will cause the progress
+		to be saved to file (currently only works for the HDF backend).
+		This may be helpful to reduce I/O overhead.
             progress (Optional[bool or str]): If ``True``, a progress bar will
                 be shown as the sampler progresses. If a string, will select a
                 specific ``tqdm`` progress bar - most notable is
@@ -400,9 +406,11 @@ class EnsembleSampler(object):
                     if tune:
                         move.tune(state, accepted)
 
-                    # Save the new step
+                    # Save the new step. Bckends may choose to buffer the
+                    # saving process, however we need to force saving at the
+                    # last iteration.
                     if store and (i + 1) % checkpoint_step == 0:
-                        self.backend.save_step(state, accepted)
+                        self.backend.save_step(state, accepted, forceSave=(i+1 == total))
 
                     pbar.update(1)
                     i += 1
@@ -662,7 +670,8 @@ def _scaled_cond(a):
 
 
 def ndarray_to_list_of_dicts(
-    x: np.ndarray, key_map: Dict[str, Union[int, List[int]]]
+    x: np.ndarray,
+    key_map: Dict[str, Union[int, List[int]]],
 ) -> List[Dict[str, Union[np.number, np.ndarray]]]:
     """
     A helper function to convert a ``np.ndarray`` into a list
